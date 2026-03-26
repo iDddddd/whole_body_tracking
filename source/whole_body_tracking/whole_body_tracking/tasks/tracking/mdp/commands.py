@@ -30,8 +30,16 @@ if TYPE_CHECKING:
 class MotionLoader:
     def __init__(self, motion_file: str, body_indexes: Sequence[int], device: str = "cpu"):
         assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
-        data = np.load(motion_file)
-        self.fps = data["fps"]
+        # allow_pickle=True is needed when string arrays are stored as object arrays in npz
+        # (common when saving Python lists via np.savez).
+        data = np.load(motion_file, allow_pickle=True)
+        self.fps = float(np.asarray(data["fps"]).reshape(-1)[0])
+        self.joint_names: list[str] | None = None
+        self.body_names: list[str] | None = None
+        if "joint_names" in data:
+            self.joint_names = [str(x) for x in np.asarray(data["joint_names"]).tolist()]
+        if "body_names" in data:
+            self.body_names = [str(x) for x in np.asarray(data["body_names"]).tolist()]
         self.joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
         self.joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
         self._body_pos_w = torch.tensor(data["body_pos_w"], dtype=torch.float32, device=device)
@@ -67,11 +75,15 @@ class MotionCommand(CommandTerm):
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.robot_anchor_body_index = self.robot.body_names.index(self.cfg.anchor_body_name)
         self.motion_anchor_body_index = self.cfg.body_names.index(self.cfg.anchor_body_name)
-        self.body_indexes = torch.tensor(
+        self.robot_body_indexes = torch.tensor(
             self.robot.find_bodies(self.cfg.body_names, preserve_order=True)[0], dtype=torch.long, device=self.device
         )
 
-        self.motion = MotionLoader(self.cfg.motion_file, self.body_indexes, device=self.device)
+        motion_body_indexes = self._resolve_motion_body_indexes(self.cfg.motion_file, self.cfg.body_names)
+        self.motion_body_indexes = torch.tensor(motion_body_indexes, dtype=torch.long, device=self.device)
+
+        self.motion = MotionLoader(self.cfg.motion_file, self.motion_body_indexes, device=self.device)
+        self._align_motion_joint_order_if_needed()
         self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.body_pos_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 3, device=self.device)
         self.body_quat_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 4, device=self.device)
@@ -151,19 +163,87 @@ class MotionCommand(CommandTerm):
 
     @property
     def robot_body_pos_w(self) -> torch.Tensor:
-        return self.robot.data.body_pos_w[:, self.body_indexes]
+        return self.robot.data.body_pos_w[:, self.robot_body_indexes]
 
     @property
     def robot_body_quat_w(self) -> torch.Tensor:
-        return self.robot.data.body_quat_w[:, self.body_indexes]
+        return self.robot.data.body_quat_w[:, self.robot_body_indexes]
 
     @property
     def robot_body_lin_vel_w(self) -> torch.Tensor:
-        return self.robot.data.body_lin_vel_w[:, self.body_indexes]
+        return self.robot.data.body_lin_vel_w[:, self.robot_body_indexes]
 
     @property
     def robot_body_ang_vel_w(self) -> torch.Tensor:
-        return self.robot.data.body_ang_vel_w[:, self.body_indexes]
+        return self.robot.data.body_ang_vel_w[:, self.robot_body_indexes]
+
+    def _resolve_motion_body_indexes(self, motion_file: str, body_names: Sequence[str]) -> list[int]:
+        """Resolve body indices into the motion file.
+
+        Backward compatible behavior:
+        - If the motion file does not contain `body_names`, we assume motion bodies follow the simulator's body index
+          ordering (i.e., produced by IsaacLab logger), and use the robot body indices directly.
+        - If `body_names` exists, we map by name and return indices in the same order as `body_names`.
+        """
+        data = np.load(motion_file, allow_pickle=True)
+        if "body_names" not in data:
+            return self.robot.find_bodies(list(body_names), preserve_order=True)[0]
+
+        motion_body_names = [str(x) for x in np.asarray(data["body_names"]).tolist()]
+        name_to_index = {name: i for i, name in enumerate(motion_body_names)}
+
+        # Handle common naming differences across exporters (e.g., MuJoCo vs URDF).
+        # The simulator might use `base_link` while the motion uses `pelvis`.
+        aliases: dict[str, list[str]] = {
+            "base_link": ["pelvis"],
+            "pelvis": ["base_link"],
+        }
+
+        resolved_indexes: list[int] = []
+        missing: list[str] = []
+        for name in body_names:
+            if name in name_to_index:
+                resolved_indexes.append(name_to_index[name])
+                continue
+            # try aliases
+            found = False
+            for alt in aliases.get(name, []):
+                if alt in name_to_index:
+                    resolved_indexes.append(name_to_index[alt])
+                    found = True
+                    break
+            if not found:
+                missing.append(name)
+
+        if missing:
+            raise ValueError(
+                "Motion file is missing required bodies: "
+                + ", ".join(missing)
+                + f". Available example: {motion_body_names[:10]}..."
+            )
+
+        return resolved_indexes
+
+    def _align_motion_joint_order_if_needed(self):
+        """Align motion joint order to the simulator joint order when motion file stores joint names.
+
+        Older motions produced by IsaacLab typically omit `joint_names` and already match simulator ordering.
+        """
+        if self.motion.joint_names is None:
+            return
+
+        robot_joint_names = list(self.robot.joint_names)
+        name_to_index = {name: i for i, name in enumerate(self.motion.joint_names)}
+        missing = [name for name in robot_joint_names if name not in name_to_index]
+        if missing:
+            raise ValueError(
+                "Motion file is missing required joints: "
+                + ", ".join(missing)
+                + f". Available example: {self.motion.joint_names[:10]}..."
+            )
+        reindex = torch.tensor([name_to_index[name] for name in robot_joint_names], device=self.motion.joint_pos.device)
+        self.motion.joint_pos = self.motion.joint_pos[:, reindex]
+        self.motion.joint_vel = self.motion.joint_vel[:, reindex]
 
     @property
     def robot_anchor_pos_w(self) -> torch.Tensor:
