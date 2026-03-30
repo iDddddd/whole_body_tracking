@@ -49,47 +49,11 @@ X2_ULTRA_CFG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.76),
-        # NOTE: IsaacLab validates default joint positions are within URDF limits.
-        # The X2 elbow joints have limits [-2.356, 0], so positive defaults will error.
-        joint_pos={
-            # legs (order matches your provided default_position)
-            "left_hip_pitch_joint": -0.2,
-            "left_hip_roll_joint": 0.3,
-            "left_hip_yaw_joint": 0.5,
-            "left_knee_joint": 0.6,
-            "left_ankle_pitch_joint": -0.27,
-            "left_ankle_roll_joint": -0.13,
-            "right_hip_pitch_joint": -0.29,
-            "right_hip_roll_joint": -0.15,
-            "right_hip_yaw_joint": 0.27,
-            "right_knee_joint": 0.65,
-            "right_ankle_pitch_joint": -0.4,
-            "right_ankle_roll_joint": 0.14,
-            # waist
-            "waist_yaw_joint": 0.84,
-            "waist_pitch_joint": 0.0,
-            "waist_roll_joint": 0.0,
-            # left arm
-            "left_shoulder_pitch_joint": -0.53,
-            "left_shoulder_roll_joint": 0.0,
-            "left_shoulder_yaw_joint": -0.37,
-            "left_elbow_joint": -2.3,
-            "left_wrist_yaw_joint": 0.0,
-            "left_wrist_pitch_joint": -0.26,
-            "left_wrist_roll_joint": -0.13,
-            # right arm
-            "right_shoulder_pitch_joint": -0.64,
-            "right_shoulder_roll_joint": 0.0,
-            "right_shoulder_yaw_joint": 0.43,
-            "right_elbow_joint": -2.0,
-            "right_wrist_yaw_joint": 0.0,
-            "right_wrist_pitch_joint": -0.256,
-            "right_wrist_roll_joint": 0.0,
-            # head (not provided in your list; keep neutral)
-            "head_yaw_joint": 0.0,
-            "head_pitch_joint": 0.0,
-        },
+        # Match the MuJoCo MJCF default pose in `assets/x2_ultra/x2_ultra.xml`.
+        # - Root height in MJCF: body pelvis pos="0 0 0.68"
+        # - Joint defaults: MJCF has no explicit `qpos` defaults, so they are zero.
+        pos=(0.0, 0.0, 0.68),
+        joint_pos={".*": 0.0},
         joint_vel={".*": 0.0},
     ),
     soft_joint_pos_limit_factor=0.9,
