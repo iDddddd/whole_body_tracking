@@ -28,9 +28,24 @@ def export_motion_policy_as_onnx(
     policy_exporter.export(path, filename)
 
 
-class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
+class _OnnxMotionPolicyExporter(torch.nn.Module):
     def __init__(self, env: ManagerBasedRLEnv, actor_critic, normalizer=None, verbose=False):
-        super().__init__(actor_critic, normalizer, verbose)
+        super().__init__()
+        self.verbose = verbose
+
+        # rsl-rl < 4 / old IsaacLab exporter path: policy container with `.actor` / `.student`
+        if hasattr(actor_critic, "actor") or hasattr(actor_critic, "student"):
+            legacy_exporter = _OnnxPolicyExporter(actor_critic, normalizer, verbose)
+            self.actor = legacy_exporter.actor
+            self.normalizer = legacy_exporter.normalizer
+        # rsl-rl >= 4/5 path: bare model object (e.g. MLPModel/RNNModel) that can generate its own ONNX wrapper
+        elif hasattr(actor_critic, "as_onnx"):
+            export_model = actor_critic.as_onnx(verbose=verbose)
+            self.actor = export_model
+            self.normalizer = torch.nn.Identity()
+        else:
+            raise ValueError("Unsupported policy type for ONNX export.")
+
         cmd: MotionCommand = env.command_manager.get_term("motion")
 
         self.joint_pos = cmd.motion.joint_pos.to("cpu")
@@ -55,7 +70,11 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
 
     def export(self, path, filename):
         self.to("cpu")
-        obs = torch.zeros(1, self.actor[0].in_features)
+        self.eval()
+        input_size = getattr(self.actor, "input_size", None)
+        if input_size is None:
+            input_size = self.actor[0].in_features
+        obs = torch.zeros(1, input_size)
         time_step = torch.zeros(1, 1)
         torch.onnx.export(
             self,

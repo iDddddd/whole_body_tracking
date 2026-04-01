@@ -3,6 +3,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import importlib.metadata as metadata
 import sys
 
 from isaaclab.app import AppLauncher
@@ -48,6 +49,7 @@ import gymnasium as gym
 import os
 import pathlib
 import torch
+from packaging import version
 
 from rsl_rl.runners import OnPolicyRunner
 
@@ -59,7 +61,7 @@ from isaaclab.envs import (
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.dict import print_dict
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
@@ -67,12 +69,30 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 import whole_body_tracking.tasks  # noqa: F401
 from whole_body_tracking.utils.exporter import attach_onnx_metadata, export_motion_policy_as_onnx
 
+installed_version = metadata.version("rsl-rl-lib")
+minimum_supported_version = "3.0.1"
+if version.parse(installed_version) < version.parse(minimum_supported_version):
+    raise RuntimeError(
+        f"Unsupported rsl-rl-lib version: {installed_version}. "
+        f"Please upgrade to >= {minimum_supported_version}."
+    )
+
+
+def _get_policy_model(runner: OnPolicyRunner):
+    if hasattr(runner.alg, "get_policy"):
+        return runner.alg.get_policy()
+    return getattr(runner.alg, "policy", None)
+
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
     """Play with RSL-RL agent."""
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+
+    # Convert deprecated Isaac Lab PPO configs (`policy`) into the model configs
+    # expected by newer rsl-rl versions (`actor` / `critic`).
+    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -158,8 +178,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     export_motion_policy_as_onnx(
         env.unwrapped,
-        ppo_runner.alg.policy,
-        # normalizer=ppo_runner.obs_normalizer,
+        _get_policy_model(ppo_runner),
         normalizer=getattr(ppo_runner, "obs_normalizer", None),
         path=export_model_dir,
         filename="policy.onnx",
