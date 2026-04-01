@@ -4,26 +4,6 @@ from isaaclab.assets.articulation import ArticulationCfg
 
 from whole_body_tracking.assets import ASSET_DIR
 
-# Reuse the same PD design heuristics as G1 for a reasonable starting point.
-ARMATURE_5020 = 0.003609725
-ARMATURE_7520_14 = 0.010177520
-ARMATURE_7520_22 = 0.025101925
-ARMATURE_4010 = 0.00425
-
-NATURAL_FREQ = 10 * 2.0 * 3.1415926535  # 10Hz
-DAMPING_RATIO = 2.0
-
-STIFFNESS_5020 = ARMATURE_5020 * NATURAL_FREQ**2
-STIFFNESS_7520_14 = ARMATURE_7520_14 * NATURAL_FREQ**2
-STIFFNESS_7520_22 = ARMATURE_7520_22 * NATURAL_FREQ**2
-STIFFNESS_4010 = ARMATURE_4010 * NATURAL_FREQ**2
-
-DAMPING_5020 = 2.0 * DAMPING_RATIO * ARMATURE_5020 * NATURAL_FREQ
-DAMPING_7520_14 = 2.0 * DAMPING_RATIO * ARMATURE_7520_14 * NATURAL_FREQ
-DAMPING_7520_22 = 2.0 * DAMPING_RATIO * ARMATURE_7520_22 * NATURAL_FREQ
-DAMPING_4010 = 2.0 * DAMPING_RATIO * ARMATURE_4010 * NATURAL_FREQ
-
-
 X2_ULTRA_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
         fix_base=False,
@@ -133,23 +113,7 @@ X2_ULTRA_CFG = ArticulationCfg(
                 "waist_pitch_joint": 3.0,
                 "waist_roll_joint": 3.0,
             },
-            armature={
-                "left_hip_pitch_joint": ARMATURE_7520_14,
-                "left_hip_roll_joint": ARMATURE_7520_22,
-                "left_hip_yaw_joint": ARMATURE_7520_14,
-                "left_knee_joint": ARMATURE_7520_22,
-                "left_ankle_pitch_joint": ARMATURE_5020,
-                "left_ankle_roll_joint": ARMATURE_5020,
-                "right_hip_pitch_joint": ARMATURE_7520_14,
-                "right_hip_roll_joint": ARMATURE_7520_22,
-                "right_hip_yaw_joint": ARMATURE_7520_14,
-                "right_knee_joint": ARMATURE_7520_22,
-                "right_ankle_pitch_joint": ARMATURE_5020,
-                "right_ankle_roll_joint": ARMATURE_5020,
-                "waist_yaw_joint": ARMATURE_7520_14,
-                "waist_pitch_joint": ARMATURE_5020,
-                "waist_roll_joint": ARMATURE_5020,
-            },
+            armature=0.01,
         ),
         # Arms + head
         "upper_body": ImplicitActuatorCfg(
@@ -227,24 +191,7 @@ X2_ULTRA_CFG = ArticulationCfg(
                 "head_yaw_joint": 0.5,
                 "head_pitch_joint": 0.5,
             },
-            armature={
-                "left_shoulder_pitch_joint": ARMATURE_5020,
-                "left_shoulder_roll_joint": ARMATURE_5020,
-                "left_shoulder_yaw_joint": ARMATURE_5020,
-                "left_elbow_joint": ARMATURE_5020,
-                "left_wrist_yaw_joint": ARMATURE_5020,
-                "left_wrist_pitch_joint": ARMATURE_4010,
-                "left_wrist_roll_joint": ARMATURE_4010,
-                "right_shoulder_pitch_joint": ARMATURE_5020,
-                "right_shoulder_roll_joint": ARMATURE_5020,
-                "right_shoulder_yaw_joint": ARMATURE_5020,
-                "right_elbow_joint": ARMATURE_5020,
-                "right_wrist_yaw_joint": ARMATURE_5020,
-                "right_wrist_pitch_joint": ARMATURE_4010,
-                "right_wrist_roll_joint": ARMATURE_4010,
-                "head_yaw_joint": 0.25 * ARMATURE_4010,
-                "head_pitch_joint": 0.25 * ARMATURE_4010,
-            },
+            armature=0.01,
         ),
     },
 )
