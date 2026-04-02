@@ -7,46 +7,49 @@ import numpy as np  # 数值计算与数组处理
 import onnxruntime  # ONNX 运行时推理引擎  
 import onnx  # ONNX 模型解析加载  
 import torch  # PyTorch 张量与模型工具  
+import os  # 文件路径操作  
 
-XML_PATH = "/home/user/Documents/whole_body_tracking/source/whole_body_tracking/whole_body_tracking/assets/unitree_description/mjcf/g1.xml"  # MuJoCo 模型 XML 路径  
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))  # 仓库根目录  
+XML_PATH = os.path.join(_REPO_ROOT, "source/whole_body_tracking/whole_body_tracking/assets/x2_ultra/x2_ultra.xml")  # MuJoCo 模型 XML 路径  
 SIMULATION_DURATION = 300.0  # 总仿真时长（秒）  
 SIMULATION_DT = 0.002  # 物理仿真步长  
 CONTROL_DECIMATION = 10  # 控制更新降采样倍数  
-NUM_ACTIONS = 29  # 动作维度数量  
-NUM_OBS = 160  # 观测维度数量  
-MOTION_BODY_INDEX = 9  # 动作序列中参考刚体索引  
+NUM_ACTIONS = 31  # 动作维度数量  
+NUM_OBS = 170  # 观测维度数量  
 BODY_NAME = "torso_link"  # 机器人参考刚体名称  
 
-JOINT_XML = [  # MuJoCo 关节顺序列表  
-    "left_hip_pitch_joint",  # 左髋俯仰关节名称  
-    "left_hip_roll_joint",  # 左髋滚转关节名称  
-    "left_hip_yaw_joint",  # 左髋偏航关节名称  
-    "left_knee_joint",  # 左膝关节名称  
-    "left_ankle_pitch_joint",  # 左踝俯仰关节名称  
-    "left_ankle_roll_joint",  # 左踝滚转关节名称  
-    "right_hip_pitch_joint",  # 右髋俯仰关节名称  
-    "right_hip_roll_joint",  # 右髋滚转关节名称  
-    "right_hip_yaw_joint",  # 右髋偏航关节名称  
-    "right_knee_joint",  # 右膝关节名称  
-    "right_ankle_pitch_joint",  # 右踝俯仰关节名称  
-    "right_ankle_roll_joint",  # 右踝滚转关节名称  
-    "waist_yaw_joint",  # 腰部偏航关节名称  
-    "waist_roll_joint",  # 腰部滚转关节名称  
-    "waist_pitch_joint",  # 腰部俯仰关节名称  
-    "left_shoulder_pitch_joint",  # 左肩俯仰关节名称  
-    "left_shoulder_roll_joint",  # 左肩滚转关节名称  
-    "left_shoulder_yaw_joint",  # 左肩偏航关节名称  
-    "left_elbow_joint",  # 左肘关节名称  
-    "left_wrist_roll_joint",  # 左腕滚转关节名称  
-    "left_wrist_pitch_joint",  # 左腕俯仰关节名称  
-    "left_wrist_yaw_joint",  # 左腕偏航关节名称  
-    "right_shoulder_pitch_joint",  # 右肩俯仰关节名称  
-    "right_shoulder_roll_joint",  # 右肩滚转关节名称  
-    "right_shoulder_yaw_joint",  # 右肩偏航关节名称  
-    "right_elbow_joint",  # 右肘关节名称  
-    "right_wrist_roll_joint",  # 右腕滚转关节名称  
-    "right_wrist_pitch_joint",  # 右腕俯仰关节名称  
-    "right_wrist_yaw_joint",  # 右腕偏航关节名称  
+JOINT_XML = [  # MuJoCo 关节顺序列表（X2, qpos 顺序, 31 关节）  
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_pitch_joint",
+    "waist_roll_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_yaw_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_roll_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_yaw_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_roll_joint",
+    "head_yaw_joint",
+    "head_pitch_joint",
 ]  # 关节顺序列表结束  
 
 
@@ -80,8 +83,8 @@ def pd_control(target_q, q, kp, target_dq, dq, kd):  # 计算 PD 控制力矩
 
 def parse_args():  # 解析命令行参数  
     parser = argparse.ArgumentParser()  # 创建参数解析器  
-    parser.add_argument("--motion_file", type=str, default="../sim2sim/motion.npz", help="motion npz file")  # 动作文件路径参数  
-    parser.add_argument("--policy_path", type=str, default="../sim2sim/policy.onnx", help="onnx policy")  # 策略模型路径参数  
+    parser.add_argument("--motion_file", type=str, default=os.path.join(_REPO_ROOT, "artifacts/walk1_subject1_x2:v0/motion.npz"), help="motion npz file")  # 动作文件路径参数  
+    parser.add_argument("--policy_path", type=str, default=os.path.join(_REPO_ROOT, "logs/rsl_rl/x2_flat/2026-04-01_20-41-43_walk1_subject1_v1/2026-04-01_20-41-43_walk1_subject1_v1.onnx"), help="onnx policy")  # 策略模型路径参数  
     return parser.parse_args()  # 返回解析后的参数  
 
 
@@ -136,12 +139,32 @@ def load_policy_metadata(policy_path, joint_xml):  # 读取策略元数据并重
 
 
 def load_motion(motion_file):  # 读取动作数据文件  
-    motion = np.load(motion_file)  # 加载 npz 数据  
+    motion = np.load(motion_file, allow_pickle=True)  # 加载 npz 数据  
     motion_pos = motion["body_pos_w"]  # 读取所有刚体位置序列  
     motion_quat = motion["body_quat_w"]  # 读取所有刚体姿态四元数序列  
     motion_input_pos = motion["joint_pos"]  # 读取关节位置序列  
     motion_input_vel = motion["joint_vel"]  # 读取关节速度序列  
-    return motion_pos, motion_quat, motion_input_pos, motion_input_vel  # 返回动作数据  
+    # 从 npz body_names 动态查找锚点刚体索引  
+    motion_body_index = None
+    if "body_names" in motion:
+        body_names_list = [str(x) for x in motion["body_names"]]
+        if BODY_NAME in body_names_list:
+            motion_body_index = body_names_list.index(BODY_NAME)
+            print(f"[motion] Found {BODY_NAME} at body index {motion_body_index} in npz body_names")
+        else:
+            raise ValueError(f"{BODY_NAME} not found in npz body_names: {body_names_list}")
+    else:
+        print("[motion] npz has no body_names field, falling back to hard-coded index")
+    # 查找根刚体（pelvis）索引，用于初始化机器人全局位姿
+    root_body_index = None
+    if "body_names" in motion:
+        if "pelvis" in body_names_list:
+            root_body_index = body_names_list.index("pelvis")
+    # 读取 npz 关节名称（用于后续重排到策略顺序）  
+    motion_joint_names = None
+    if "joint_names" in motion:
+        motion_joint_names = [str(x) for x in motion["joint_names"]]
+    return motion_pos, motion_quat, motion_input_pos, motion_input_vel, motion_body_index, motion_joint_names, root_body_index  
 
 
 if __name__ == "__main__":  # 主程序入口  
@@ -149,7 +172,7 @@ if __name__ == "__main__":  # 主程序入口
     motion_file = args.motion_file  # 获取动作文件路径  
     policy_path = args.policy_path  # 获取策略模型路径  
 
-    motion_pos, motion_quat, motion_input_pos, motion_input_vel = load_motion(motion_file)  # 加载动作数据  
+    motion_pos, motion_quat, motion_input_pos, motion_input_vel, motion_body_index_from_npz, motion_joint_names, root_body_index = load_motion(motion_file)  # 加载动作数据  
 
     (  # 解包策略元数据  
         joint_seq,  # 关节名称顺序  
@@ -163,6 +186,16 @@ if __name__ == "__main__":  # 主程序入口
     ) = load_policy_metadata(policy_path, JOINT_XML)  # 加载策略元数据
     print(f"Loaded policy metadata with {len(joint_seq)} joints and body names: {body_names}")  # 打印加载信息
 
+    # 将 npz 关节数据从 npz 顺序（MuJoCo DFS）重排到策略顺序（IsaacLab BFS）  
+    # 训练时 MotionCommand._align_motion_joint_order_if_needed() 做了同样的事  
+    if motion_joint_names is not None:
+        npz_to_policy = [motion_joint_names.index(j) for j in joint_seq]
+        motion_input_pos = motion_input_pos[:, npz_to_policy]
+        motion_input_vel = motion_input_vel[:, npz_to_policy]
+        print(f"[motion] Reordered motion joints from npz order to policy order ({len(npz_to_policy)} joints)")
+    else:
+        print("[motion] WARNING: npz has no joint_names, assuming order matches policy")
+
     obs = np.zeros(NUM_OBS, dtype=np.float32)  # 初始化观测向量  
     counter = 0  # 控制器计数器  
 
@@ -170,20 +203,63 @@ if __name__ == "__main__":  # 主程序入口
     d = mujoco.MjData(m)  # 创建 MuJoCo 数据对象  
     m.opt.timestep = SIMULATION_DT  # 设置仿真时间步长  
 
+    # 覆写动力学参数以匹配训练侧（XML 默认 armature=0.03, frictionloss=0.3）  
+    m.dof_armature[6:] = 0.01  # 训练侧 armature  
+    m.dof_frictionloss[6:] = 0.0  # 训练侧 frictionloss  
+    print(f"[override] dof_armature[6:]={m.dof_armature[6]}, dof_frictionloss[6:]={m.dof_frictionloss[6]}")  
+
+    # 覆写腕部力矩上限以匹配训练侧 effort_limit_sim（XML 中 wrist pitch/roll 为 ±2.2）
+    wrist_effort_limits = {
+        "left_wrist_pitch_joint": 4.8,
+        "left_wrist_roll_joint": 4.8,
+        "right_wrist_pitch_joint": 4.8,
+        "right_wrist_roll_joint": 4.8,
+    }
+    for act_id in range(m.nu):
+        joint_id = m.actuator_trnid[act_id, 0]
+        joint_name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+        if joint_name in wrist_effort_limits:
+            lim = wrist_effort_limits[joint_name]
+            m.actuator_ctrlrange[act_id, 0] = -lim
+            m.actuator_ctrlrange[act_id, 1] = lim
+    print("[override] wrist pitch/roll ctrlrange -> +/-4.8 Nm")
+
     # 使用ONNX Runtime库创建了一个推理会话，用于加载和执行预训练的神经网络策略模型
     policy = onnxruntime.InferenceSession(policy_path)  
 
-    action_buffer = np.zeros((NUM_ACTIONS,), dtype=np.float32)  # 初始化上一动作缓存  
     timestep = 0  # 初始化动作序列索引  
-    target_dof_pos = joint_pos_array.copy()  # 目标关节位置初始化为默认角度  
-    d.qpos[2] = 0.8  # 设置初始基座高度  
-    d.qpos[7:] = target_dof_pos  # 写入初始关节角度  
+
+    # --- 初始化：teleport 到 motion 参考第一帧（与训练侧 _resample_command 行为对齐） ---  
+    # motion_input_pos 已是策略顺序，需转为 MuJoCo qpos 顺序写入 d.qpos  
+    init_joint_pos_policy = motion_input_pos[0, :]  # 第一帧关节位置（策略顺序）  
+    init_joint_pos_xml = np.array([init_joint_pos_policy[joint_seq.index(joint)] for joint in JOINT_XML])  # 转 MuJoCo 顺序  
+    init_joint_vel_policy = motion_input_vel[0, :]  # 第一帧关节速度（策略顺序）
+    init_joint_vel_xml = np.array([init_joint_vel_policy[joint_seq.index(joint)] for joint in JOINT_XML])  # 转 MuJoCo 顺序
+    # 初始化根刚体位姿：从 motion 参考的第一帧 pelvis 位置/朝向
+    # 训练侧 _resample_command 会 teleport root 到 motion 参考位姿
+    if root_body_index is not None:
+        d.qpos[0:3] = motion_pos[0, root_body_index, :]  # pelvis 世界位置
+        d.qpos[3:7] = motion_quat[0, root_body_index, :]  # pelvis 世界朝向
+        print(f"[init] Root pose from motion: pos={d.qpos[0:3]}, quat={d.qpos[3:7]}")
+    else:
+        d.qpos[2] = 0.7  # fallback: 仅设高度
+    d.qpos[7:] = init_joint_pos_xml  # 写入 motion 参考第一帧关节角度  
+    d.qvel[6 : 6 + NUM_ACTIONS] = init_joint_vel_xml  # 写入 motion 参考第一帧关节速度
+    mujoco.mj_forward(m, d)  # 刷新派生状态，确保观测使用一致初始状态
+    target_dof_pos = init_joint_pos_xml.copy()  # PD 目标也设为参考姿态  
+    # 初始化 action_buffer 使其对应当前姿态，避免 INIT→TRACK 跳变  
+    action_buffer = ((init_joint_pos_policy - joint_pos_array_seq) / np.where(action_scale != 0, action_scale, 1.0)).astype(np.float32)  
+    print(f"[init] Teleported to motion frame 0, action_buffer range: [{action_buffer.min():.3f}, {action_buffer.max():.3f}]")  
 
     body_name = anchor_body_name or BODY_NAME  # 使用元数据锚点名称或默认名称  
     body_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, body_name)  # 获取锚点 ID  
     if body_id == -1:  # 检查锚点是否存在  
         raise ValueError(f"Body {body_name} not found in model")  # 抛出错误提示  
-    motion_body_index = MOTION_BODY_INDEX
+    pelvis_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "pelvis")  # root body ID（用于 base_lin_vel）  
+    if motion_body_index_from_npz is not None:  # 优先使用 npz 动态查找的索引  
+        motion_body_index = motion_body_index_from_npz
+    else:
+        raise ValueError("npz 中没有 body_names，无法确定锚点索引，请检查 motion 文件")
 
     with mujoco.viewer.launch_passive(m, d) as viewer:  # 启动被动可视化窗口  
         
@@ -199,23 +275,12 @@ if __name__ == "__main__":  # 主程序入口
         while viewer.is_running() and time.time() - start < SIMULATION_DURATION:  # 主循环条件  
             step_start = time.time()  # 记录本步起始时间  
 
-            mujoco.mj_step(m, d)  # 进行一步物理仿真  
-            tau = pd_control(  # 计算关节控制力矩  
-                target_dof_pos,  # 目标关节角度  
-                d.qpos[7:],  # freejoint 后面的所有关节位置  
-                stiffness_array,  # 关节刚度  
-                np.zeros_like(damping_array),  # 目标关节速度置零  
-                d.qvel[6:],  # freejoint 后面的所有关节角速度  
-                damping_array,  # 关节阻尼  
-            )  # 控制力矩计算结束  
-
-            d.ctrl[:] = tau  # 写入力矩控制输入  
-            counter += 1  # 更新控制器计数  
+            # ---- 策略更新（在 mj_step 之前，与训练侧一致） ----  
             if counter % CONTROL_DECIMATION == 0:  # 到达控制周期更新策略  
                 position = d.xpos[body_id]  # 获取仿真中锚点刚体位置  
                 quaternion = d.xquat[body_id]  # 获取仿真中锚点刚体姿态  
                 motion_input = np.concatenate(  # 拼接目标关节位置与速度  
-                    (motion_input_pos[timestep, :], motion_input_vel[timestep, :]),  # 使用 npz 原始关节顺序  
+                    (motion_input_pos[timestep, :], motion_input_vel[timestep, :]),  # 使用策略关节顺序  
                     axis=0,  # 进行拼接  
                 )  # 拼接结束  
                 motion_pos_current = motion_pos[timestep, motion_body_index, :]  # 读取当前参考锚点动作位置  
@@ -227,15 +292,17 @@ if __name__ == "__main__":  # 主程序入口
                 mujoco.mju_quat2Mat(anchor_ori, anchor_quat)  # 仿真锚点相对于参考锚点的相对姿态四元数转旋转矩阵  
                 anchor_ori = anchor_ori.reshape(3, 3)[:, :2]  # 取旋转矩阵前两列  
                 anchor_ori = anchor_ori.reshape(-1,)  # 展平为向量  
-                base_rot = np.zeros(9)  # 初始化基座旋转矩阵  
-                mujoco.mju_quat2Mat(base_rot, quaternion)  # 基座四元数转旋转矩阵  
-                base_rot = base_rot.reshape(3, 3)  # 重塑为 3x3 矩阵  
-                base_lin_vel = base_rot.T @ d.qvel[0:3]  # 把“基座root/freejoint线速度”从世界坐标系转换到机器人本体坐标系
-                base_ang_vel = d.qvel[3:6]  # 读取基座坐标系角速度  
+                # base_lin_vel 需要用 root body（pelvis）旋转，而非 anchor body（torso_link）  
+                # 训练侧 mdp.base_lin_vel = robot.data.root_lin_vel_b（pelvis 坐标系）  
+                pelvis_rot = np.zeros(9)  
+                mujoco.mju_quat2Mat(pelvis_rot, d.xquat[pelvis_id])  # pelvis 四元数转旋转矩阵  
+                pelvis_rot = pelvis_rot.reshape(3, 3)  
+                base_lin_vel = pelvis_rot.T @ d.qvel[0:3]  # 世界系线速度 → pelvis 本体系  
+                base_ang_vel = d.qvel[3:6]  # MuJoCo free joint 角速度已在 body 本体系，无需旋转  
 
                 offset = 0  # 观测向量写入偏移量  
-                obs[offset : offset + 58] = motion_input  # 写入目标关节指令  
-                offset += 58  # 更新偏移量  
+                obs[offset : offset + 2 * NUM_ACTIONS] = motion_input  # 写入目标关节指令  
+                offset += 2 * NUM_ACTIONS  # 更新偏移量  
                 obs[offset : offset + 3] = anchor_pos  # 写入参考锚点相对位置  
                 offset += 3  # 更新偏移量  
                 obs[offset : offset + 6] = anchor_ori  # 写入参考锚点相对姿态
@@ -265,9 +332,28 @@ if __name__ == "__main__":  # 主程序入口
                 target_dof_pos = action * action_scale + joint_pos_array_seq  # 计算目标关节角度  
                 target_dof_pos = target_dof_pos.reshape(-1,)  # 确保为一维向量  
                 target_dof_pos = np.array([target_dof_pos[joint_seq.index(joint)] for joint in JOINT_XML])  # 重排到 MuJoCo 顺序  
+                if timestep < 5:  # 前 5 个策略周期打印调试信息  
+                    print(f"[step {timestep}] base_lin_vel={base_lin_vel}, base_ang_vel={base_ang_vel}")
+                    print(f"[step {timestep}] anchor_pos={anchor_pos}, anchor_ori_norm={np.linalg.norm(anchor_ori):.3f}")
+                    print(f"[step {timestep}] action min={action.min():.3f} max={action.max():.3f} mean={action.mean():.3f}")
+                    shoulder_indices = [joint_seq.index(j) for j in ["left_shoulder_pitch_joint", "right_shoulder_pitch_joint"]]
+                    print(f"[step {timestep}] shoulder_pitch action: L={action[shoulder_indices[0]]:.3f}, R={action[shoulder_indices[1]]:.3f}")
                 timestep += 1  # 更新动作序列索引  
+
+            # ---- PD 控制 + 物理仿真（每个 sim step 都执行） ----  
+            tau = pd_control(  # 计算关节控制力矩  
+                target_dof_pos,  # 目标关节角度  
+                d.qpos[7:],  # freejoint 后面的所有关节位置  
+                stiffness_array,  # 关节刚度  
+                np.zeros_like(damping_array),  # 目标关节速度置零  
+                d.qvel[6:],  # freejoint 后面的所有关节角速度  
+                damping_array,  # 关节阻尼  
+            )  # 控制力矩计算结束  
+            d.ctrl[:] = tau  # 写入力矩控制输入  
+            mujoco.mj_step(m, d)  # 进行一步物理仿真  
+            counter += 1  # 更新控制器计数  
 
             viewer.sync()  # 同步可视化显示  
             time_until_next_step = m.opt.timestep - (time.time() - step_start)  # 计算剩余睡眠时间  
             if time_until_next_step > 0:  # 若剩余时间为正则休眠  
-                time.sleep(time_until_next_step)  # 休眠保持实时步长  
+                time.sleep(time_until_next_step)  # 休眠保持实时步长    
