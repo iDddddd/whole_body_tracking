@@ -17,9 +17,9 @@ This script:
 
 Example:
     python scripts/pkl_to_npz_mujoco.py \
-      --input_pkl datasets/motions_pkl/x2_ultra/aiming1_subject.pkl \
+      --input_pkl datasets/motions_pkl/x2_ultra/walk1_subject1.pkl \
       --mjcf source/whole_body_tracking/whole_body_tracking/assets/x2_ultra/x2_ultra.xml \
-      --output_npz /tmp/motion.npz \
+      --output_npz datasets/motions_npz/walk1_subject1.npz \
       --output_fps 50
 
 Then upload:

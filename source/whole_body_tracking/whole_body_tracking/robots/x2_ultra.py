@@ -113,7 +113,7 @@ X2_ULTRA_CFG = ArticulationCfg(
                 "waist_pitch_joint": 3.0,
                 "waist_roll_joint": 3.0,
             },
-            armature=0.01,
+            armature=0.03,
         ),
         # Arms + head
         "upper_body": ImplicitActuatorCfg(
@@ -191,7 +191,7 @@ X2_ULTRA_CFG = ArticulationCfg(
                 "head_yaw_joint": 0.5,
                 "head_pitch_joint": 0.5,
             },
-            armature=0.01,
+            armature=0.03,
         ),
     },
 )

@@ -170,12 +170,12 @@
         <color rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
         <mesh filename="./meshes/left_ankle_pitch_link.STL" />
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="left_ankle_pitch_joint" type="revolute">
     <origin xyz="-0.0100000000000136 -0.000124910735236235 -0.282000000000081" rpy="0 0 0" />
@@ -344,12 +344,12 @@
         <color rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
         <mesh filename="./meshes/right_ankle_pitch_link.STL" />
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="right_ankle_pitch_joint" type="revolute">
     <origin xyz="-0.00999999999984942 0.000124910735223305 -0.282000000000021" rpy="0 0 0" />
