@@ -10,7 +10,13 @@ from whole_body_tracking.utils.exporter import attach_onnx_metadata, export_moti
 
 
 def _is_wandb_logger(runner: OnPolicyRunner) -> bool:
-    return getattr(runner.logger, "logger_type", None) == "wandb"
+    # rsl_rl >= 3.x stores logger type directly on runner (`logger_type`);
+    # older custom wrappers may expose it via `runner.logger.logger_type`.
+    logger_type = getattr(runner, "logger_type", None)
+    if logger_type is None:
+        logger = getattr(runner, "logger", None)
+        logger_type = getattr(logger, "logger_type", None)
+    return logger_type == "wandb"
 
 
 def _get_policy_model(runner: OnPolicyRunner):
