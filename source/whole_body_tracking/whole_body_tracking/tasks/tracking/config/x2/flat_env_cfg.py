@@ -16,8 +16,7 @@ class X2FlatEnvCfg(TrackingEnvCfg):
         # Use a compact subset for stability and faster convergence.
         self.commands.motion.anchor_body_name = "torso_link"
         self.commands.motion.body_names = [
-            # X2 URDF uses `base_link` as the root body (older motion files may call it `pelvis`).
-            "base_link",
+            "pelvis",
             "left_hip_roll_link",
             "left_knee_link",
             "left_ankle_roll_link",
@@ -27,9 +26,9 @@ class X2FlatEnvCfg(TrackingEnvCfg):
             "torso_link",
             "left_shoulder_roll_link",
             "left_elbow_link",
-            "left_wrist_yaw_link",
+            "left_wrist_roll_link",
             "right_shoulder_roll_link",
             "right_elbow_link",
-            "right_wrist_yaw_link",
+            "right_wrist_roll_link",
             "head_yaw_link",
         ]

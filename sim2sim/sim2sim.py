@@ -20,10 +20,10 @@ BODY_NAME = "torso_link"  # 机器人参考刚体名称
 
 # motion npz 中无有效数据的关节（retargeting 未覆盖），锁定到 default pose  
 LOCKED_JOINTS = [
-    "left_wrist_pitch_joint",
-    "left_wrist_roll_joint",
-    "right_wrist_pitch_joint",
-    "right_wrist_roll_joint",
+    # "left_wrist_pitch_joint",
+    # "left_wrist_roll_joint",
+    # "right_wrist_pitch_joint",
+    # "right_wrist_roll_joint",
 ]  
 
 JOINT_XML = [  # MuJoCo 关节顺序列表（X2, qpos 顺序, 31 关节）  
@@ -88,8 +88,8 @@ def quaternion_multiply(q1, q2):  # 计算四元数乘积
 
 def parse_args():  # 解析命令行参数  
     parser = argparse.ArgumentParser()  # 创建参数解析器  
-    parser.add_argument("--motion_file", type=str, default=os.path.join(_REPO_ROOT, "artifacts/walk1_subject1_x2:v0/motion.npz"), help="motion npz file")  # 动作文件路径参数  
-    parser.add_argument("--policy_path", type=str, default=os.path.join(_REPO_ROOT, "logs/rsl_rl/x2_flat/2026-04-01_20-41-43_walk1_subject1_v1/2026-04-01_20-41-43_walk1_subject1_v1.onnx"), help="onnx policy")  # 策略模型路径参数  
+    parser.add_argument("--motion_file", type=str, default=os.path.join(_REPO_ROOT, "artifacts/walk1_subject1:v0/motion.npz"), help="motion npz file")  # 动作文件路径参数  
+    parser.add_argument("--policy_path", type=str, default=os.path.join(_REPO_ROOT, "/home/user/Documents/whole_body_tracking/logs/rsl_rl/x2_flat/2026-04-03_23-03-03_walk1_subject1/2026-04-03_23-03-03_walk1_subject1.onnx"), help="onnx policy")  # 策略模型路径参数  
     parser.add_argument("--start_frame", type=int, default=None, help="motion start frame (None=auto-select frame with moderate velocity)")  # 起始帧  
     return parser.parse_args()  # 返回解析后的参数  
 
