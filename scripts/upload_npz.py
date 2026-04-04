@@ -1,7 +1,7 @@
 """Upload a local motion.npz to the Weights & Biases registry.
 
 Example:
-	python scripts/upload_npz.py --npz_path /tmp/motion.npz --collection_name aiming1_subject_x2
+	 python scripts/upload_npz.py --npz_path datasets/motions_npz/run1_subject2.npz --collection_name run1_subject2
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ def main():
 	parser.add_argument("--npz_path", type=str, required=True, help="Path to motion.npz")
 	parser.add_argument("--collection_name", type=str, required=True, help="Registry collection name")
 	parser.add_argument("--registry_name", type=str, default="motions", help="Registry artifact type (default: motions)")
-	parser.add_argument("--project", type=str, default="csv_to_npz", help="W&B project to log from")
+	parser.add_argument("--project", type=str, default="motions_npz", help="W&B project to log from")
 	args = parser.parse_args()
 
 	run = wandb.init(project=args.project, name=args.collection_name)
