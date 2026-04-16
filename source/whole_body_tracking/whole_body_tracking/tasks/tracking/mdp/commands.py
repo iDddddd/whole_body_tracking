@@ -600,10 +600,15 @@ class MotionCommandCfg(CommandTermCfg):
 
     joint_position_range: tuple[float, float] = (-0.52, 0.52)
 
-    adaptive_kernel_size: int = 1
+    # 卷积平滑窗口大小。对 bin 失败率做滑动平均，使相邻 bin 概率更连续。设为 1 表示不平滑（禁用）
+    adaptive_kernel_size: int = 1  
+    # EMA 平滑系数，越大越重视历史失败数据。0.8 表示当前失败占 20%，历史失败占 80%（仅 kernel_size > 1 时有效）
     adaptive_lambda: float = 0.8
+    # beta：失败率 cap 的倍数，防止极难 bin 被过度采样。调低可降低采样集中度，调高可更专注于难样本。3.0 表示 cap 在平均失败率的 3 倍处。
     adaptive_beta: float = 3.0
+    # uniform_ratio：在自适应采样中，保持一定比例的均匀采样，防止过度集中在难样本。0.8 表示 80% 的采样为均匀分布。
     adaptive_uniform_ratio: float = 0.8
+    # alpha：自适应采样的学习率，控制失败率更新的速度。0.001 表示较慢的更新。
     adaptive_alpha: float = 0.001
 
     anchor_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/pose")
