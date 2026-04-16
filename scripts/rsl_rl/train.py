@@ -25,7 +25,11 @@ parser.add_argument("--num_envs", type=int, default=None, help="Number of enviro
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
-parser.add_argument("--registry_name", type=str, required=True, help="The name of the wand registry.")
+parser.add_argument(
+    "--motion_file", type=str, default=None,
+    help="Path to a single .npz motion file or a directory containing multiple .npz files.",
+)
+parser.add_argument("--registry_name", type=str, default=None, help="The name of the wandb registry (optional).")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -114,17 +118,33 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    # load the motion file from the wandb registry
-    registry_name = args_cli.registry_name
-    if ":" not in registry_name:  # Check if the registry name includes alias, if not, append ":latest"
-        registry_name += ":latest"
+    # load motion file(s)
+    import glob
     import pathlib
 
-    import wandb
-
-    api = wandb.Api()
-    artifact = api.artifact(registry_name)
-    env_cfg.commands.motion.motion_file = str(pathlib.Path(artifact.download()) / "motion.npz")
+    registry_name = args_cli.registry_name
+    if args_cli.motion_file is not None:
+        motion_path = os.path.abspath(args_cli.motion_file)
+        if os.path.isdir(motion_path):
+            motion_files = sorted(glob.glob(os.path.join(motion_path, "*.npz")))
+            assert len(motion_files) > 0, f"No .npz files found in directory: {motion_path}"
+            print(f"[INFO] Found {len(motion_files)} motion file(s) in {motion_path}")
+        else:
+            assert motion_path.endswith(".npz"), f"Expected .npz file, got: {motion_path}"
+            motion_files = [motion_path]
+        env_cfg.commands.motion.motion_files = motion_files
+        env_cfg.commands.motion.motion_file = motion_files[0]
+    elif registry_name is not None:
+        if ":" not in registry_name:
+            registry_name += ":latest"
+        import wandb
+        api = wandb.Api()
+        artifact = api.artifact(registry_name)
+        motion_file = str(pathlib.Path(artifact.download()) / "motion.npz")
+        env_cfg.commands.motion.motion_file = motion_file
+        env_cfg.commands.motion.motion_files = [motion_file]
+    else:
+        raise ValueError("Either --motion_file or --registry_name must be specified.")
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -159,7 +179,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # create runner from rsl-rl
     runner = OnPolicyRunner(
-        env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device, registry_name=registry_name
+        env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device,
+        registry_name=registry_name,
     )
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
