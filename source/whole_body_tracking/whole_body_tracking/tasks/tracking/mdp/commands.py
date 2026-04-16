@@ -28,26 +28,80 @@ if TYPE_CHECKING:
 
 
 class MotionLoader:
-    def __init__(self, motion_file: str, body_indexes: Sequence[int], device: str = "cpu"):
-        assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
-        # allow_pickle=True is needed when string arrays are stored as object arrays in npz
-        # (common when saving Python lists via np.savez).
-        data = np.load(motion_file, allow_pickle=True)
-        self.fps = float(np.asarray(data["fps"]).reshape(-1)[0])
+    """Load one or more motion NPZ files and concatenate them into a single dataset.
+
+    When multiple files are provided, each file is treated as an independent motion clip.
+    All clips are concatenated along the time axis into single tensors for GPU-friendly indexing.
+    Per-clip metadata (``clip_starts``, ``clip_lengths``) is stored so that the caller can
+    map a global frame index back to (clip_index, local_frame).
+    """
+
+    def __init__(self, motion_files: str | list[str], body_indexes: Sequence[int], device: str = "cpu"):
+        # 支持单文件路径或多文件路径列表
+        if isinstance(motion_files, str):
+            motion_files = [motion_files]
+        assert len(motion_files) > 0, "At least one motion file must be provided."
+        for f in motion_files:
+            assert os.path.isfile(f), f"Invalid file path: {f}"
+
+        # 用于逐 clip 累积数据的临时列表
+        all_joint_pos = []
+        all_joint_vel = []
+        all_body_pos_w = []
+        all_body_quat_w = []
+        all_body_lin_vel_w = []
+        all_body_ang_vel_w = []
+        clip_lengths: list[int] = []  # 每个 clip 的帧数
+
         self.joint_names: list[str] | None = None
         self.body_names: list[str] | None = None
-        if "joint_names" in data:
-            self.joint_names = [str(x) for x in np.asarray(data["joint_names"]).tolist()]
-        if "body_names" in data:
-            self.body_names = [str(x) for x in np.asarray(data["body_names"]).tolist()]
-        self.joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
-        self.joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
-        self._body_pos_w = torch.tensor(data["body_pos_w"], dtype=torch.float32, device=device)
-        self._body_quat_w = torch.tensor(data["body_quat_w"], dtype=torch.float32, device=device)
-        self._body_lin_vel_w = torch.tensor(data["body_lin_vel_w"], dtype=torch.float32, device=device)
-        self._body_ang_vel_w = torch.tensor(data["body_ang_vel_w"], dtype=torch.float32, device=device)
+        self.fps: float = 0.0
+
+        for motion_file in motion_files:
+            data = np.load(motion_file, allow_pickle=True)
+            fps = float(np.asarray(data["fps"]).reshape(-1)[0])
+            if self.fps == 0.0:
+                self.fps = fps
+            else:
+                # 所有 clip 必须具有相同的帧率，否则拼接后时间语义不一致
+                assert abs(self.fps - fps) < 1e-3, (
+                    f"FPS mismatch across motion files: {self.fps} vs {fps} in {motion_file}"
+                )
+
+            # 关节名 / body 名仅从第一个包含该字段的文件中读取（所有文件关节结构一致）
+            if self.joint_names is None and "joint_names" in data:
+                self.joint_names = [str(x) for x in np.asarray(data["joint_names"]).tolist()]
+            if self.body_names is None and "body_names" in data:
+                self.body_names = [str(x) for x in np.asarray(data["body_names"]).tolist()]
+
+            all_joint_pos.append(torch.tensor(data["joint_pos"], dtype=torch.float32, device=device))
+            all_joint_vel.append(torch.tensor(data["joint_vel"], dtype=torch.float32, device=device))
+            all_body_pos_w.append(torch.tensor(data["body_pos_w"], dtype=torch.float32, device=device))
+            all_body_quat_w.append(torch.tensor(data["body_quat_w"], dtype=torch.float32, device=device))
+            all_body_lin_vel_w.append(torch.tensor(data["body_lin_vel_w"], dtype=torch.float32, device=device))
+            all_body_ang_vel_w.append(torch.tensor(data["body_ang_vel_w"], dtype=torch.float32, device=device))
+            clip_lengths.append(all_joint_pos[-1].shape[0])
+
+        # 将所有 clip 沿时间轴拼接为单一大张量，便于 GPU 单次索引
+        self.joint_pos = torch.cat(all_joint_pos, dim=0)
+        self.joint_vel = torch.cat(all_joint_vel, dim=0)
+        self._body_pos_w = torch.cat(all_body_pos_w, dim=0)
+        self._body_quat_w = torch.cat(all_body_quat_w, dim=0)
+        self._body_lin_vel_w = torch.cat(all_body_lin_vel_w, dim=0)
+        self._body_ang_vel_w = torch.cat(all_body_ang_vel_w, dim=0)
         self._body_indexes = body_indexes
-        self.time_step_total = self.joint_pos.shape[0]
+        self.time_step_total = self.joint_pos.shape[0]  # 所有 clip 的总帧数
+
+        # 每个 clip 的元数据：帧数和在拼接张量中的起始帧索引
+        self.num_clips = len(clip_lengths)
+        self.clip_lengths = torch.tensor(clip_lengths, dtype=torch.long, device=device)
+        starts = [0]
+        for l in clip_lengths[:-1]:
+            starts.append(starts[-1] + l)
+        self.clip_starts = torch.tensor(starts, dtype=torch.long, device=device)  # 每个 clip 的全局起始帧
+
+        print(f"[MotionLoader] Loaded {self.num_clips} clip(s), "
+              f"total frames: {self.time_step_total}, fps: {self.fps}")
 
     @property
     def body_pos_w(self) -> torch.Tensor:
@@ -79,17 +133,39 @@ class MotionCommand(CommandTerm):
             self.robot.find_bodies(self.cfg.body_names, preserve_order=True)[0], dtype=torch.long, device=self.device
         )
 
-        motion_body_indexes = self._resolve_motion_body_indexes(self.cfg.motion_file, self.cfg.body_names)
+        # 优先使用 motion_files 列表，若为空则回退到单文件 motion_file（向后兼容）
+        motion_files = self.cfg.motion_files if self.cfg.motion_files else [self.cfg.motion_file]
+
+        # 用第一个文件解析 body 索引（假设所有文件的 body 结构一致）
+        motion_body_indexes = self._resolve_motion_body_indexes(motion_files[0], self.cfg.body_names)
         self.motion_body_indexes = torch.tensor(motion_body_indexes, dtype=torch.long, device=self.device)
 
-        self.motion = MotionLoader(self.cfg.motion_file, self.motion_body_indexes, device=self.device)
+        self.motion = MotionLoader(motion_files, self.motion_body_indexes, device=self.device)
         self._align_motion_joint_order_if_needed()
+
+        # 每个 env 在当前 clip 内的本地时间步（非全局帧索引）
         self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        # 每个 env 当前正在播放的 clip 索引
+        self.clip_indices = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+
         self.body_pos_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 3, device=self.device)
         self.body_quat_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 4, device=self.device)
         self.body_quat_relative_w[:, :, 0] = 1.0
 
-        self.bin_count = int(self.motion.time_step_total // (1 / (env.cfg.decimation * env.cfg.sim.dt))) + 1
+        # --- SONIC 风格的 bin-based 自适应采样初始化 ---
+        # 每个 clip 按固定时长（1秒）划分 bin，跨所有 clip 汇总为全局 bin 列表
+        # frames_per_second：每秒对应的动作帧数（= 环境控制频率，因为每个策略步前进 1 帧）
+        frames_per_second = max(1.0, 1.0 / (env.cfg.decimation * env.cfg.sim.dt))
+        self._bins_per_clip = torch.zeros(self.motion.num_clips, dtype=torch.long, device=self.device)
+        for i in range(self.motion.num_clips):
+            # 每个 clip 的 bin 数 ≈ clip 时长（秒），至少 1 个 bin
+            self._bins_per_clip[i] = int(self.motion.clip_lengths[i].item() // frames_per_second) + 1
+        self.bin_count = int(self._bins_per_clip.sum().item())  # 全局 bin 总数
+        # 每个 clip 的 bin 在全局 bin 列表中的起始偏移（用于 clip↔bin 双向映射）
+        self._bin_offsets = torch.zeros(self.motion.num_clips, dtype=torch.long, device=self.device)
+        for i in range(1, self.motion.num_clips):
+            self._bin_offsets[i] = self._bin_offsets[i - 1] + self._bins_per_clip[i - 1]
+
         self.bin_failed_count = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
         self._current_bin_failed = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
         self.kernel = torch.tensor(
@@ -108,6 +184,14 @@ class MotionCommand(CommandTerm):
         self.metrics["sampling_entropy"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["sampling_top1_bin"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["sampling_clip_entropy"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["sampling_active_clips"] = torch.zeros(self.num_envs, device=self.device)
+
+    def _global_time_steps(self) -> torch.Tensor:
+        """将 per-env 的 (clip_index, 本地时间步) 转换为拼接张量的全局帧索引。"""
+        # clip_starts[clip_indices]：当前 clip 在拼接数据中的起始帧
+        # + time_steps：clip 内的本地偏移
+        return self.motion.clip_starts[self.clip_indices] + self.time_steps
 
     @property
     def command(self) -> torch.Tensor:  # TODO Consider again if this is the best observation
@@ -115,43 +199,43 @@ class MotionCommand(CommandTerm):
 
     @property
     def joint_pos(self) -> torch.Tensor:
-        return self.motion.joint_pos[self.time_steps]
+        return self.motion.joint_pos[self._global_time_steps()]
 
     @property
     def joint_vel(self) -> torch.Tensor:
-        return self.motion.joint_vel[self.time_steps]
+        return self.motion.joint_vel[self._global_time_steps()]
 
     @property
     def body_pos_w(self) -> torch.Tensor:
-        return self.motion.body_pos_w[self.time_steps] + self._env.scene.env_origins[:, None, :]
+        return self.motion.body_pos_w[self._global_time_steps()] + self._env.scene.env_origins[:, None, :]
 
     @property
     def body_quat_w(self) -> torch.Tensor:
-        return self.motion.body_quat_w[self.time_steps]
+        return self.motion.body_quat_w[self._global_time_steps()]
 
     @property
     def body_lin_vel_w(self) -> torch.Tensor:
-        return self.motion.body_lin_vel_w[self.time_steps]
+        return self.motion.body_lin_vel_w[self._global_time_steps()]
 
     @property
     def body_ang_vel_w(self) -> torch.Tensor:
-        return self.motion.body_ang_vel_w[self.time_steps]
+        return self.motion.body_ang_vel_w[self._global_time_steps()]
 
     @property
     def anchor_pos_w(self) -> torch.Tensor:
-        return self.motion.body_pos_w[self.time_steps, self.motion_anchor_body_index] + self._env.scene.env_origins
+        return self.motion.body_pos_w[self._global_time_steps(), self.motion_anchor_body_index] + self._env.scene.env_origins
 
     @property
     def anchor_quat_w(self) -> torch.Tensor:
-        return self.motion.body_quat_w[self.time_steps, self.motion_anchor_body_index]
+        return self.motion.body_quat_w[self._global_time_steps(), self.motion_anchor_body_index]
 
     @property
     def anchor_lin_vel_w(self) -> torch.Tensor:
-        return self.motion.body_lin_vel_w[self.time_steps, self.motion_anchor_body_index]
+        return self.motion.body_lin_vel_w[self._global_time_steps(), self.motion_anchor_body_index]
 
     @property
     def anchor_ang_vel_w(self) -> torch.Tensor:
-        return self.motion.body_ang_vel_w[self.time_steps, self.motion_anchor_body_index]
+        return self.motion.body_ang_vel_w[self._global_time_steps(), self.motion_anchor_body_index]
 
     @property
     def robot_joint_pos(self) -> torch.Tensor:
@@ -285,40 +369,103 @@ class MotionCommand(CommandTerm):
         self.metrics["error_joint_vel"] = torch.norm(self.joint_vel - self.robot_joint_vel, dim=-1)
 
     def _adaptive_sampling(self, env_ids: Sequence[int]):
+        """SONIC 风格的 bin-based 自适应动作采样。
+
+        对每个 bin 追踪失败率 f_i，将其 cap 到 beta * f_bar（平均失败率的 beta 倍），
+        防止极难 bin 被过度采样。最终采样概率将归一化的 cap 后失败分布与均匀分布混合：
+
+            p_i = alpha * p_hat_i + (1 - alpha) * (1 / N)
+
+        其中 p_hat_i = capped_f_i / sum(capped_f_i)，N 为 bin 总数。
+        """
+        # 检查哪些 env 是因失败（terminated）而触发 resample 的
         episode_failed = self._env.termination_manager.terminated[env_ids]
         if torch.any(episode_failed):
-            current_bin_index = torch.clamp(
-                (self.time_steps * self.bin_count) // max(self.motion.time_step_total, 1), 0, self.bin_count - 1
+            # 将失败 env 的 (clip_index, 本地时间步) 映射到全局 bin 索引，统计各 bin 的失败次数
+            clip_ids = self.clip_indices[env_ids][episode_failed]
+            local_ts = self.time_steps[env_ids][episode_failed]
+            bins_per_clip_for_env = self._bins_per_clip[clip_ids]
+            clip_lengths_for_env = self.motion.clip_lengths[clip_ids]
+            # 本地 bin 索引 = 本地时间步 / clip 帧数 * clip bin 数，clamp 防止越界
+            local_bin = torch.min(
+                (local_ts * bins_per_clip_for_env) // torch.clamp(clip_lengths_for_env, min=1),
+                bins_per_clip_for_env - 1,
             )
-            fail_bins = current_bin_index[env_ids][episode_failed]
-            self._current_bin_failed[:] = torch.bincount(fail_bins, minlength=self.bin_count)
+            local_bin = torch.max(local_bin, torch.zeros_like(local_bin))
+            # 加上该 clip 的全局 bin 偏移，得到全局 bin 索引
+            global_bin = self._bin_offsets[clip_ids] + local_bin
+            self._current_bin_failed[:] = torch.bincount(global_bin, minlength=self.bin_count).float()
 
-        # Sample
-        sampling_probabilities = self.bin_failed_count + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
-        sampling_probabilities = torch.nn.functional.pad(
-            sampling_probabilities.unsqueeze(0).unsqueeze(0),
-            (0, self.cfg.adaptive_kernel_size - 1),  # Non-causal kernel
-            mode="replicate",
-        )
-        sampling_probabilities = torch.nn.functional.conv1d(sampling_probabilities, self.kernel.view(1, 1, -1)).view(-1)
+        # --- SONIC 采样公式 ---
+        f = self.bin_failed_count.clone()  # 各 bin 的 EMA 平滑失败率
+        f_bar = f.mean()  # 所有 bin 的平均失败率
+        beta = self.cfg.adaptive_beta
+        # Step 1：将失败率 cap 到 beta * f_bar，避免极端 bin 主导采样
+        if f_bar > 0:
+            f = torch.clamp(f, max=beta * f_bar)
 
+        # Step 2：卷积平滑，使相邻 bin 的采样概率更连续（kernel_size > 1 时启用）
+        if self.cfg.adaptive_kernel_size > 1:
+            f = torch.nn.functional.pad(
+                f.unsqueeze(0).unsqueeze(0),
+                (0, self.cfg.adaptive_kernel_size - 1),
+                mode="replicate",
+            )
+            f = torch.nn.functional.conv1d(f, self.kernel.view(1, 1, -1)).view(-1)
+
+        # Step 3：归一化 cap 后的失败率得到 p_hat，再与均匀分布以 alpha 混合
+        f_sum = f.sum()
+        alpha = self.cfg.adaptive_uniform_ratio  # alpha：自适应分量的权重
+        N = float(self.bin_count)
+        if f_sum > 0:
+            p_hat = f / f_sum  # 归一化的 cap 失败率分布
+            sampling_probabilities = alpha * p_hat + (1.0 - alpha) / N  # 混合均匀分布
+        else:
+            # 尚无失败数据时退化为纯均匀采样
+            sampling_probabilities = torch.ones(self.bin_count, device=self.device) / N
+
+        # 最终归一化保证概率之和为 1
         sampling_probabilities = sampling_probabilities / sampling_probabilities.sum()
 
+        # 按概率多项式采样全局 bin
         sampled_bins = torch.multinomial(sampling_probabilities, len(env_ids), replacement=True)
 
-        self.time_steps[env_ids] = (
-            (sampled_bins + sample_uniform(0.0, 1.0, (len(env_ids),), device=self.device))
-            / self.bin_count
-            * (self.motion.time_step_total - 1)
-        ).long()
+        # --- 将全局 bin 反映射回 (clip_index, 本地时间步) ---
+        # _bin_offsets 单调递增，用 searchsorted 快速定位每个 bin 属于哪个 clip
+        clip_for_bin = torch.searchsorted(self._bin_offsets, sampled_bins, right=True) - 1
+        clip_for_bin = torch.clamp(clip_for_bin, 0, self.motion.num_clips - 1)
+        # 计算 bin 在该 clip 内的局部索引
+        local_bin = sampled_bins - self._bin_offsets[clip_for_bin]
+        bins_in_clip = self._bins_per_clip[clip_for_bin]
+        clip_len = self.motion.clip_lengths[clip_for_bin]
 
-        # Metrics
+        # 在 bin 内均匀抖动，得到本地时间步（避免所有 env 都从 bin 的起始帧开始）
+        self.clip_indices[env_ids] = clip_for_bin
+        local_ts = (
+            (local_bin.float() + sample_uniform(0.0, 1.0, (len(env_ids),), device=self.device))
+            / bins_in_clip.float() * (clip_len.float() - 1.0)
+        ).long()
+        self.time_steps[env_ids] = torch.min(torch.max(local_ts, torch.zeros_like(local_ts)), clip_len - 1)
+
+        # --- 记录 bin 级采样分布指标 ---
         H = -(sampling_probabilities * (sampling_probabilities + 1e-12).log()).sum()
-        H_norm = H / math.log(self.bin_count)
+        H_norm = H / math.log(max(self.bin_count, 2))  # 归一化到 [0, 1]
         pmax, imax = sampling_probabilities.max(dim=0)
-        self.metrics["sampling_entropy"][:] = H_norm
-        self.metrics["sampling_top1_prob"][:] = pmax
-        self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count
+        self.metrics["sampling_entropy"][:] = H_norm          # bin 分布熵（越小越集中）
+        self.metrics["sampling_top1_prob"][:] = pmax          # 最高概率 bin 的值
+        self.metrics["sampling_top1_bin"][:] = imax.float() / max(self.bin_count, 1)  # 最难 bin 的相对位置
+
+        # --- 记录 clip 级采样分布指标 ---
+        # 将每个 clip 对应的所有 bin 概率求和，得到 clip 的边际采样概率
+        clip_probs = torch.zeros(self.motion.num_clips, device=self.device)
+        for i in range(self.motion.num_clips):
+            s = int(self._bin_offsets[i].item())
+            e = s + int(self._bins_per_clip[i].item())
+            clip_probs[i] = sampling_probabilities[s:e].sum()
+        clip_probs = clip_probs / clip_probs.sum().clamp(min=1e-12)
+        H_clip = -(clip_probs * (clip_probs + 1e-12).log()).sum()
+        H_clip_norm = H_clip / math.log(max(self.motion.num_clips, 2))  # 归一化到 [0, 1]
+        self.metrics["sampling_clip_entropy"][:] = H_clip_norm  # clip 分布熵（越接近 1 越均匀）
 
     def _resample_command(self, env_ids: Sequence[int]):
         if len(env_ids) == 0:
@@ -358,7 +505,9 @@ class MotionCommand(CommandTerm):
 
     def _update_command(self):
         self.time_steps += 1
-        env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
+        # 检查哪些 env 的本地时间步已超过当前 clip 的长度，触发重新采样（换到新的 clip 和起始帧）
+        clip_len = self.motion.clip_lengths[self.clip_indices]
+        env_ids = torch.where(self.time_steps >= clip_len)[0]
         self._resample_command(env_ids)
 
         anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
@@ -377,6 +526,11 @@ class MotionCommand(CommandTerm):
             self.cfg.adaptive_alpha * self._current_bin_failed + (1 - self.cfg.adaptive_alpha) * self.bin_failed_count
         )
         self._current_bin_failed.zero_()
+
+        # 统计当前所有 env 中正在播放的不重复 clip 数量，反映 clip 多样性
+        # 值越高说明各 env 在同时体验不同动作片段，训练数据更多样
+        active_clips = float(self.clip_indices.unique().shape[0])
+        self.metrics["sampling_active_clips"][:] = active_clips
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
@@ -437,6 +591,7 @@ class MotionCommandCfg(CommandTermCfg):
     asset_name: str = MISSING
 
     motion_file: str = MISSING
+    motion_files: list[str] = []
     anchor_body_name: str = MISSING
     body_names: list[str] = MISSING
 
@@ -447,7 +602,8 @@ class MotionCommandCfg(CommandTermCfg):
 
     adaptive_kernel_size: int = 1
     adaptive_lambda: float = 0.8
-    adaptive_uniform_ratio: float = 0.1
+    adaptive_beta: float = 3.0
+    adaptive_uniform_ratio: float = 0.8
     adaptive_alpha: float = 0.001
 
     anchor_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/pose")
